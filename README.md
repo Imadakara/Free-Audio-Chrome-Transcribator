@@ -1,60 +1,51 @@
-# Meet Local Transcriber
+# Free Audio Chrome Transcribator
 
-Расширение Chrome в один клик записывает активную вкладку с видеовстречей (Google Meet,
-Яндекс Телемост, Zoom web-client и любой другой сервис — звук собеседников + ваш микрофон)
-и отправляет запись на ваш собственный локальный Whisper-сервер.
-Всё остаётся на вашем компьютере — ничего не уходит в облако.
+A Chrome extension that records the active browser tab of a video call in one click
+(any service — Google Meet, Yandex Telemost, Zoom web client, or anything else — participant
+audio + your microphone, mixed) and sends the recording to your own local Whisper server for
+transcription. Everything stays on your machine — nothing goes to the cloud.
 
-## 0. Предыстория
+## Features
 
-Понадобилось реализовать транскрибатор видео-встреч для личных нужд.
-ChatGPT дал инструкцию, где предложил исполььзовать локально установленный Whisper.
-Установить получилось (команда `python -m whisper --help` работает), и транскрибировать тестовую запись тоже.
-Однако приходится вручную запускать запись видео через Xbox Game Bar и затем выполнять команду транскрибации (например `python -m whisper "C:\Users\PC\Videos\Captures\meeting.mp4" --language Russian --output_dir "C:\Users\PC\Videos\Captures" --output_format txt`) - это не очень удобно.
-Решено делать "решение в один клик" на базе расширения для Google Chrome/
+- One-click recording of any active browser tab — not tied to a specific meeting service.
+- Mixes tab audio with your microphone so both sides of the conversation end up in the transcript.
+- **"Record microphone" toggle** in the popup — turn it off when you only need the tab's audio
+  (e.g. transcribing a YouTube video) and don't want your own voice mixed in. Remembered between
+  popup opens.
+- The popup shows the hostname of the tab about to be recorded, so you can confirm it's the right one.
+- Recording continues even if you close the popup — state is kept in `chrome.storage.local` and
+  the popup re-renders from it next time you open it.
+- 100% local: transcription runs on your own machine via `openai-whisper`, nothing is uploaded anywhere.
+- The whisper server terminal shows a live spinner while a request is being transcribed, and a
+  `done in Ns` line with the detected language/text length when it finishes.
 
-Связка "своё расширение → свой локальный Whisper-сервер":
+## Requirements
 
-Расширение Chrome (Manifest V3) — кнопка в попапе. Жмёте «Начать» — оно захватывает аудио активной вкладки через chrome.tabCapture, плюс подмешивает ваш микрофон (иначе в расшифровке будет только собеседник, а не вы — это частая ловушка при захвате вкладки). Жмёте «Стоп» — файл автоматически летит на ваш локальный сервер.
-Локальный сервер на Python — маленький Flask-сервис, который держит вашу модель Whisper в памяти и отдаёт текст по HTTP. Расширение стучится в http://127.0.0.1:8000, ничего никуда не уходит в интернет.
+- Google Chrome (or another Chromium-based browser that supports Manifest V3 extensions).
+- Python 3.9+ and [ffmpeg](https://ffmpeg.org/download.html) on `PATH`, to run the local Whisper server.
 
-Технически самый неочевидный момент — в MV3 сервис-воркер не может напрямую писать медиапоток, поэтому запись идёт через offscreen-документ, а состояние (идёт запись / готова расшифровка) хранится в chrome.storage, так что можно закрыть попап и не бояться — запись продолжится.
+## Quick start
 
-Далее Claude собрал рабочий каркас и дал архив.
-
-Внутри архива после распаковки: chrome-extension/ (загружается через «Режим разработчика» в chrome://extensions) и whisper-server/ (ваш локальный сервер), плюс README с пошаговой установкой.
-
-Логика: расширение захватывает звук активной вкладки (независимо от того, какой сервис встреч в ней открыт), микширует его с вашим микрофоном (чтобы в тексте были обе стороны разговора), пишет через MediaRecorder, а по кнопке «Стоп» шлёт файл на http://127.0.0.1:8000/transcribe — туда, где крутится ваш Whisper. Попап показывает хост активной вкладки, чтобы можно было убедиться — запишется именно нужная. Попап можно закрывать во время записи, состояние хранится в chrome.storage.
-
-Пара моментов, на которые стоит обратить внимание при первом запуске:
-
-- Это неподписанное расширение — Chrome покажет предупреждение при загрузке через «Режим разработчика», это нормально.
-- При самом первом клике «Начать запись» на любой встрече Chrome откроет отдельную вкладку с запросом разрешения на микрофон — разрешите там (подробности и почему это отдельная вкладка, а не всплывающее окно — в разделе «Как пользоваться» ниже). Дальше это разрешение запоминается, вкладка больше не появится.
-- Если сервер ещё не запущен, попап покажет понятную ошибку вместо зависания.
-
-Это рабочий каркас, а не отполированный продукт — вполне может понадобиться донастройка под вашу версию Whisper (если у вас faster-whisper вместо openai-whisper, серверный файл легко переписать под него — структура эндпоинта останется той же).
-
-## 1. Запустите локальный сервер расшифровки
+### 1. Run the local transcription server
 
 ```bash
 cd whisper-server
 pip install -r requirements.txt
-# нужен ffmpeg: https://ffmpeg.org/download.html (в macOS: brew install ffmpeg)
+# needs ffmpeg on PATH: https://ffmpeg.org/download.html (macOS: brew install ffmpeg)
 python whisper_server.py
 ```
 
-Оставьте это окно терминала открытым — сервер должен работать во время встреч. Держите
-терминал видимым: сервер печатает туда диагностику по каждой расшифровке (см. «Диагностика
-и troubleshooting» ниже) — полезно, если результат выглядит подозрительно.
+Keep this terminal window open — the server needs to keep running during your calls. While a
+request is being transcribed you'll see a spinner (`[transcribe] processing... | (Ns)`) so you
+know the server is working, not stuck; when it's done you'll see a
+`[transcribe] done in Ns — ...` line with the result (language, text length, text itself — see
+[Troubleshooting](#troubleshooting) below, useful if the result looks off).
 
-### Настройка модели и языка
+By default this uses the `base` model with language auto-detection. Both are environment
+variables, set before starting `python whisper_server.py`, **not** command-line flags:
 
-По умолчанию используется модель `base` (быстро, но менее точно) с автоопределением языка.
-Оба параметра — переменные окружения, задаются перед запуском `python whisper_server.py`,
-**не** флаги командной строки:
-
-**Windows (PowerShell)** — синтаксис `VAR=val команда` из bash тут не работает, переменные
-задаются отдельной командой:
+**Windows (PowerShell)** — the `VAR=val command` bash syntax doesn't work here, set variables as
+separate statements:
 ```powershell
 $env:WHISPER_MODEL = "small"
 $env:WHISPER_LANGUAGE = "ru"
@@ -66,66 +57,97 @@ python whisper_server.py
 WHISPER_MODEL=small WHISPER_LANGUAGE=ru python whisper_server.py
 ```
 
-- `WHISPER_MODEL` — `tiny` → `base` → `small` → `medium` → `large`: точнее, но медленнее и
-  тяжелее по памяти/VRAM. Для регулярной русскоязычной расшифровки рекомендуется минимум
-  `small` — на `base` с автоопределением языка регулярно проскакивают ошибки распознавания
-  языка на короткой/тихой речи.
-- `WHISPER_LANGUAGE` — код языка (`ru`, `en`, ...). Если не задать — автоопределение по
-  первым секундам аудио, что менее надёжно на коротких или тихих записях. Если вы всегда
-  говорите на одном языке — задавайте явно, это и быстрее, и точнее.
-- Первый запуск с новой моделью скачает её веса (для `small`/`medium` — несколько сотен МБ),
-  дальше работает офлайн.
+- `WHISPER_MODEL` — `tiny` → `base` → `small` → `medium` → `large`: more accurate but slower and
+  heavier on memory/VRAM. For regular use, `small` or above is recommended — `base` with
+  auto-detected language frequently mis-detects the language on short/quiet speech.
+- `WHISPER_LANGUAGE` — a language code (`ru`, `en`, ...). If unset, the language is auto-detected
+  from the first few seconds of audio, which is less reliable on short or quiet recordings. If
+  you always speak the same language, set it explicitly — it's both faster and more accurate.
+- The first run with a new model downloads its weights (a few hundred MB for `small`/`medium`),
+  then it works fully offline.
 
-## 2. Установите расширение в Chrome
+### 2. Load the extension into Chrome
 
-1. Откройте `chrome://extensions`
-2. Включите переключатель **Режим разработчика** (справа вверху)
-3. Нажмите **Загрузить распакованное расширение**
-4. Выберите папку `chrome-extension`
+1. Open `chrome://extensions`
+2. Enable **Developer mode** (top right)
+3. Click **Load unpacked**
+4. Select the `chrome-extension` folder
 
-После правок в файлах расширения (если вы их меняете) — жмите **Reload** (круглая стрелка)
-на карточке расширения на этой же странице: service worker и offscreen-документ не
-подхватывают изменения на лету.
+After editing the extension's files (if you do) — click **Reload** (circular arrow) on the
+extension's card on that same page: the service worker and the offscreen document don't pick up
+changes on the fly.
 
-## 3. Как пользоваться
+## Usage
 
-1. Откройте вкладку с видеовстречей (Google Meet, Яндекс Телемост, Zoom web-client — любой сервис)
-2. Кликните на иконку расширения → в попапе появится хост активной вкладки, убедитесь что это нужная встреча → **Начать запись**
-3. **Только в самый первый раз**: откроется отдельная вкладка с запросом доступа к микрофону —
-   разрешите. Она закроется сама. Это отдельная вкладка, а не диалог во всплывающем попапе,
-   потому что попап Chrome закрывается при потере фокуса, а показ системного диалога разрешения
-   как раз фокус и забирает — в попапе диалог обрывается, не дождавшись ответа. При следующих
-   записях этот шаг не повторится (разрешение запоминается).
-4. Можно закрыть попап — запись идёт в фоне, встреча не прерывается
-5. По окончании откройте попап снова → **Стоп**
-6. Через несколько секунд/минут (зависит от длины записи и модели) в попапе
-   появится текст расшифровки — можно скопировать или скачать .txt
+1. Open a tab with a video call (Google Meet, Yandex Telemost, Zoom web client — any service)
+2. Click the extension icon → the popup shows the active tab's hostname, confirm it's the right call
+3. The **"Record microphone"** checkbox is on by default, and remembered between popup opens.
+   Turn it off if you don't need your voice in the transcript (e.g. on a YouTube tab — there's no
+   reply from you anyway, and with the mic on it would just mix in as noise).
+4. **Start recording**
+5. **Only the very first time, if the mic is enabled**: a separate tab opens asking for
+   microphone access — allow it. It closes itself. This is a separate tab rather than a dialog
+   inside the popup because Chrome popups close on losing focus, and showing the system
+   permission dialog does exactly that — the dialog gets cut off before you can answer it inside
+   a popup. This step won't repeat on later recordings (the permission is remembered). If the
+   toggle is off, this tab never appears at all.
+6. You can close the popup — recording continues in the background, the call isn't interrupted
+7. When done, open the popup again → **Stop**
+8. The Whisper server starts processing — its terminal shows a spinner with elapsed time and then
+   a "done" line (see [Quick start](#1-run-the-local-transcription-server) above). After a few
+   seconds/minutes (depending on recording length and model) the transcript appears in the popup
+   — you can copy it or download it as .txt
 
-## Важно знать
+## Important notes
 
-- **Микрофон + звук вкладки микшируются вместе** — иначе в расшифровке был
-  бы только собеседник, а не вы.
-- Работает, пока вкладка со встречей открыта и активна — не закрывайте её во время записи.
-- Точность/скорость — вопрос баланса модели: `base` расшифрует минуту встречи
-  за несколько секунд на CPU, `medium` — точнее, но заметно медленнее без GPU.
-- Это неопубликованное расширение (загружается вручную через "Режим
-  разработчика"), в Chrome Web Store публикация не входит в эту инструкцию.
+- **Microphone + tab audio are mixed together**, if the "Record microphone" toggle is on —
+  otherwise only the other participant would end up in the transcript, not you. Turn the toggle
+  off if you don't need your voice.
+- Works while the call's tab is open and active — don't close it during recording.
+- Accuracy vs. speed is a trade-off of model size: `base` transcribes a minute of audio in a few
+  seconds on CPU, `medium` is more accurate but noticeably slower without a GPU.
+- This is an unpublished extension (loaded manually via "Developer mode") — publishing to the
+  Chrome Web Store isn't covered by these instructions.
 
-## Диагностика и troubleshooting
+## Troubleshooting
 
-- **Расшифровка пустая или это явно не то, что вы говорили** (типичный пример — модель
-  выдаёт что-то вроде титров/копирайта вместо речи) — это известная галлюцинация Whisper на
-  почти-тишине: модель обучена в том числе на субтитрах с Ютуба и в отсутствие реальной речи
-  иногда "додумывает" похожий по стилю текст вместо пустой строки или ошибки. Означает, что в
-  записи не было настоящего звука — проверьте:
-  - Разрешение на микрофон для расширения не отозвано: `chrome://settings/content/microphone`.
-  - В самой встрече выбран тот же микрофон, что и в системе по умолчанию.
-  - В терминале сервера (см. `## 1`) для этого запроса будет строка вида
-    `[transcribe] определён язык: ru, длина текста: 0, текст: ''` — нулевая длина текста
-    подтверждает, что на сервер пришла тишина, дело не в модели.
-- **Автоопределение языка** нестабильно на короткой (секунды) или тихой записи — если
-  постоянно путает язык, задайте `WHISPER_LANGUAGE` явно (см. `## 1`).
-- Если после клика «Начать запись» ничего не происходит — проверьте три консоли: попапа
-  (ПКМ по иконке → «Проверить всплывающее окно»), service worker'а (`chrome://extensions` →
-  карточка расширения → ссылка «Service worker») и offscreen-документа (там же появляется
-  ссылка на `offscreen.html`, но только после того как запись хоть раз стартовала).
+- **The transcript is empty, or clearly not what you said** (a typical example — the model
+  outputs something like credits/copyright text instead of speech) — this is a known Whisper
+  hallucination on near-silence: the model is trained partly on YouTube subtitles and, absent
+  real speech, sometimes "makes up" similarly styled text instead of returning an empty string or
+  an error. It means the recording didn't contain real audio — check:
+  - Mic permission for the extension hasn't been revoked: `chrome://settings/content/microphone`.
+  - The call itself is using the same microphone as your system default.
+  - In the server's terminal (see [Quick start](#1-run-the-local-transcription-server)) that
+    request will show a line like
+    `[transcribe] done in 2.1s — detected language: ru, text length: 0, text: ''` — a text length
+    of zero confirms the server received silence, it's not a model issue.
+- **Language auto-detection** is unreliable on short (seconds) or quiet recordings — if it keeps
+  guessing the wrong language, set `WHISPER_LANGUAGE` explicitly (see
+  [Quick start](#1-run-the-local-transcription-server)).
+- If nothing happens after clicking "Start recording" — check three consoles: the popup's
+  (right-click the icon → "Inspect popup"), the service worker's (`chrome://extensions` →
+  the extension's card → "Service worker" link), and the offscreen document's (a link to
+  `offscreen.html` appears on the same card, but only after recording has started at least once).
+
+## Background
+
+This started as a personal need for a meeting transcriber. The first working setup was a locally
+installed Whisper (`python -m whisper --help` worked, transcribing a test recording worked too),
+but it meant manually recording video with Xbox Game Bar and then running a transcription command
+by hand — not exactly convenient. So the natural next step was a "one-click" solution built as a
+Chrome extension paired with a local Whisper server.
+
+The one non-obvious technical wrinkle: an MV3 service worker can't touch a `MediaStream`/
+`MediaRecorder` directly, so recording goes through an offscreen document, and state (recording /
+transcript ready) lives in `chrome.storage`, so you can close the popup mid-recording without worry.
+
+What followed was a fair amount of hands-on debugging once the extension was actually tested live
+rather than just read through — a service worker with no window context silently returning no
+tabs, `chrome.storage` turning out to be `undefined` inside the offscreen document, and Chrome
+popups closing the instant the native mic-permission dialog steals focus. All three are documented
+in [`CLAUDE.md`](CLAUDE.md) alongside the rest of the architecture, for anyone extending this later.
+
+This is a working scaffold, not a polished product — you may well need to adjust it for your
+particular Whisper setup (if you use `faster-whisper` instead of `openai-whisper`, the server
+file is easy to adapt — the endpoint's shape stays the same).

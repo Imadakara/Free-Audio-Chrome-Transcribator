@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Meet Local Transcriber",
-  "version": "1.0.0",
-  "description": "Одним кликом записывает активную вкладку с видеовстречей (собеседник + ваш микрофон) и отправляет запись на локальный Whisper-сервер для расшифровки.",
+  "name": "Free Audio Chrome Transcribator",
+  "version": "0.1.0",
+  "description": "One click records the active tab with a video call (participant audio + your mic) and sends the recording to a local Whisper server for transcription.",
   "permissions": ["tabCapture", "offscreen", "storage", "downloads", "activeTab"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
   "background": {
@@ -10,6 +10,6 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Meet Local Transcriber"
+    "default_title": "Free Audio Chrome Transcribator"
   }
 }

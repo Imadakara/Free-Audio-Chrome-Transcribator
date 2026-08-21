@@ -32,9 +32,11 @@ WHISPER_MODEL=small WHISPER_LANGUAGE=ru python whisper_server.py
 auto-detect — unreliable on short/quiet audio, prefer setting it explicitly when the spoken
 language is known.
 Server listens on `http://127.0.0.1:8000/transcribe`, POST only, `multipart/form-data` field
-`audio`. Every request logs `[transcribe] определён язык: ..., длина текста: ..., текст: ...`
-to the server's own terminal (detected language, text length, raw text) — the first thing to
-check when a transcript looks wrong; text length 0 means the uploaded audio was silent
+`audio`. While a request is being transcribed the terminal shows a live spinner (`Spinner` class,
+a daemon thread printing `\r`-overwritten frames — `model.transcribe` blocks the request thread
+for tens of seconds otherwise with zero terminal output), then logs
+`[transcribe] done in Ns — detected language: ..., text length: ..., text: ...` — the first
+thing to check when a transcript looks wrong; text length 0 means the uploaded audio was silent
 server-side, not a model problem.
 
 **Extension:** load unpacked via `chrome://extensions` → Developer mode → Load unpacked →
@@ -56,19 +58,32 @@ field: `idle → recording → transcribing → done|error`):
   has a real browser window backing it) to show the tab's hostname in `#tab-info` and to get the
   `tab.id` sent along with the `start-recording` message. Note the popup **does not** wait around
   for anything past that click — see the mic-permission gotcha below for why, and don't add logic
-  here that assumes the popup stays open after "Начать запись" is clicked.
-- **`background.js`** — service worker, the actual orchestrator. Takes the `tabId` the popup
-  already resolved, ensures mic permission (see below), calls `chrome.tabCapture.getMediaStreamId`,
-  lazily creates the offscreen document (`chrome.offscreen.createDocument`, singleton via
-  `chrome.runtime.getContexts` check), then forwards start/stop messages to it. Deliberately does
-  not call `chrome.tabs.query` itself — a service worker has no associated browser window, so
+  here that assumes the popup stays open after "Start recording" is clicked. Also owns the
+  "Record microphone" checkbox (`#mic-toggle`): its checked state persists across popup opens
+  via `chrome.storage.local`'s `micEnabled` key (default `true`) and is sent as `micEnabled` in
+  the `start-recording` message; disabled while `status` is `recording`/`transcribing` since it
+  can't take effect mid-recording. Also shows an inline error (red textarea, `EMPTY_TRANSCRIPT_MESSAGE`)
+  when `status` is `done` but `transcript` is empty — Whisper can legitimately return `""` for
+  silence/noise instead of erroring, and that shouldn't look like success.
+- **`background.js`** — service worker, the actual orchestrator. On `chrome.runtime.onInstalled`
+  (a real extension restart/update/fresh install — *not* the routine sleep/wake cycles a
+  non-persistent service worker goes through constantly) it resets `status`/`transcript`/`error`
+  to idle, so a stale result from a previous session doesn't linger forever across popup opens;
+  `micGranted` is deliberately left untouched so Reload doesn't re-trigger the permission tab.
+  Takes the `tabId` the popup already resolved, ensures mic permission *only if* `micEnabled` is
+  true (see below — skips the permission tab entirely when the toggle is off, so it never appears
+  if you always record tab-only), calls `chrome.tabCapture.getMediaStreamId`, lazily creates the offscreen document
+  (`chrome.offscreen.createDocument`, singleton via `chrome.runtime.getContexts` check), then
+  forwards start/stop messages to it (passing `micEnabled` through). Deliberately does not call
+  `chrome.tabs.query` itself — a service worker has no associated browser window, so
   `currentWindow`/`lastFocusedWindow` filters there resolve unreliably (can silently return `[]`,
   e.g. when a DevTools window currently has OS focus instead of the browser window). The popup's
   context always has a real window, so tab resolution lives there and the id is threaded through.
 - **`offscreen.js`** — does the actual media work. Captures the tab stream via
   `getUserMedia({ mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId } })`, re-routes it
   to `audioContext.destination` (tab capture mutes the tab by default — must be replayed or the
-  meeting goes silent for the recording user), separately captures the mic, mixes both into one
+  meeting goes silent for the recording user), separately captures the mic *only if `micEnabled`
+  is true* (the popup's toggle, threaded through `background.js`), mixes both into one
   `MediaStreamAudioDestinationNode`, records that with `MediaRecorder`
   (`audio/webm;codecs=opus`), and on stop POSTs the blob to `WHISPER_SERVER_URL`
   (`http://127.0.0.1:8000/transcribe`, hardcoded at the top of the file — the only place to

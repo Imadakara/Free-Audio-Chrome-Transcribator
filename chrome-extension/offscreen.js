@@ -1,4 +1,4 @@
-// Адрес вашего локального Whisper-сервера (см. папку whisper-server)
+// Address of your local Whisper server (see the whisper-server folder)
 const WHISPER_SERVER_URL = 'http://127.0.0.1:8000/transcribe';
 
 let mediaRecorder;
@@ -7,20 +7,21 @@ let micStream;
 let tabStream;
 let audioContext;
 
-// chrome.storage недоступен напрямую в offscreen-документе (проверено — там
-// undefined, хотя chrome.runtime работает нормально). Поэтому статус не пишем
-// сюда сами, а просим background (у него chrome.storage работает) записать за нас.
+// chrome.storage is not accessible directly in the offscreen document (verified
+// empirically — it's undefined there, even though chrome.runtime works fine). So
+// we don't write status here ourselves — we ask background (chrome.storage works
+// there) to write it on our behalf.
 function setState(patch) {
   chrome.runtime.sendMessage({ target: 'background', type: 'set-state', patch });
 }
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.target !== 'offscreen') return;
-  if (message.type === 'start-recording') startRecording(message.streamId);
+  if (message.type === 'start-recording') startRecording(message.streamId, message.micEnabled);
   if (message.type === 'stop-recording') stopRecording();
 });
 
-async function startRecording(streamId) {
+async function startRecording(streamId, micEnabled) {
   recordedChunks = [];
   setState({ status: 'recording', transcript: '', error: '' });
 
@@ -35,24 +36,28 @@ async function startRecording(streamId) {
       video: false
     });
   } catch (err) {
-    setState({ status: 'error', error: `Не удалось захватить звук вкладки: ${err.message}` });
+    setState({ status: 'error', error: `Could not capture tab audio: ${err.message}` });
     return;
   }
 
   audioContext = new AudioContext();
 
-  // Захват вкладки по умолчанию "глушит" звук для вас — явно проигрываем его обратно,
-  // иначе встреча замолчит, пока идёт запись.
+  // Tab capture mutes the tab by default for you — explicitly play it back,
+  // otherwise the call goes silent for you while recording.
   const tabSource = audioContext.createMediaStreamSource(tabStream);
   tabSource.connect(audioContext.destination);
 
-  // Подмешиваем микрофон, иначе в расшифровке останутся только собеседники, а не вы.
+  // Mix in the microphone, otherwise only the other participants end up in the
+  // transcript, not you. Can be turned off with the popup toggle (e.g. on a tab
+  // with no conversation, where you don't want your own voice in the transcript).
   let micSource = null;
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    micSource = audioContext.createMediaStreamSource(micStream);
-  } catch (err) {
-    console.warn('Микрофон недоступен, будет записан только звук вкладки.', err);
+  if (micEnabled) {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micSource = audioContext.createMediaStreamSource(micStream);
+    } catch (err) {
+      console.warn('Microphone unavailable, only tab audio will be recorded.', err);
+    }
   }
 
   const destination = audioContext.createMediaStreamDestination();
@@ -86,13 +91,13 @@ async function handleStop() {
 
   try {
     const res = await fetch(WHISPER_SERVER_URL, { method: 'POST', body: form });
-    if (!res.ok) throw new Error(`Сервер ответил ${res.status}`);
+    if (!res.ok) throw new Error(`Server responded ${res.status}`);
     const data = await res.json();
     setState({ status: 'done', transcript: data.text || '' });
   } catch (err) {
     setState({
       status: 'error',
-      error: `Не удалось связаться с локальным сервером (${WHISPER_SERVER_URL}). Убедитесь, что whisper_server.py запущен. Детали: ${err.message}`
+      error: `Could not reach the local server (${WHISPER_SERVER_URL}). Make sure whisper_server.py is running. Details: ${err.message}`
     });
   }
 }
