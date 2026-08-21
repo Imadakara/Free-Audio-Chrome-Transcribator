@@ -7,6 +7,13 @@ let micStream;
 let tabStream;
 let audioContext;
 
+// chrome.storage недоступен напрямую в offscreen-документе (проверено — там
+// undefined, хотя chrome.runtime работает нормально). Поэтому статус не пишем
+// сюда сами, а просим background (у него chrome.storage работает) записать за нас.
+function setState(patch) {
+  chrome.runtime.sendMessage({ target: 'background', type: 'set-state', patch });
+}
+
 chrome.runtime.onMessage.addListener((message) => {
   if (message.target !== 'offscreen') return;
   if (message.type === 'start-recording') startRecording(message.streamId);
@@ -15,17 +22,22 @@ chrome.runtime.onMessage.addListener((message) => {
 
 async function startRecording(streamId) {
   recordedChunks = [];
-  await chrome.storage.local.set({ status: 'recording', transcript: '', error: '' });
+  setState({ status: 'recording', transcript: '', error: '' });
 
-  tabStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      mandatory: {
-        chromeMediaSource: 'tab',
-        chromeMediaSourceId: streamId
-      }
-    },
-    video: false
-  });
+  try {
+    tabStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        mandatory: {
+          chromeMediaSource: 'tab',
+          chromeMediaSourceId: streamId
+        }
+      },
+      video: false
+    });
+  } catch (err) {
+    setState({ status: 'error', error: `Не удалось захватить звук вкладки: ${err.message}` });
+    return;
+  }
 
   audioContext = new AudioContext();
 
@@ -66,7 +78,7 @@ function stopRecording() {
 }
 
 async function handleStop() {
-  await chrome.storage.local.set({ status: 'transcribing' });
+  setState({ status: 'transcribing' });
 
   const blob = new Blob(recordedChunks, { type: 'audio/webm' });
   const form = new FormData();
@@ -76,9 +88,9 @@ async function handleStop() {
     const res = await fetch(WHISPER_SERVER_URL, { method: 'POST', body: form });
     if (!res.ok) throw new Error(`Сервер ответил ${res.status}`);
     const data = await res.json();
-    await chrome.storage.local.set({ status: 'done', transcript: data.text || '' });
+    setState({ status: 'done', transcript: data.text || '' });
   } catch (err) {
-    await chrome.storage.local.set({
+    setState({
       status: 'error',
       error: `Не удалось связаться с локальным сервером (${WHISPER_SERVER_URL}). Убедитесь, что whisper_server.py запущен. Детали: ${err.message}`
     });

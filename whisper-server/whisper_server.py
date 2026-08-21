@@ -44,7 +44,9 @@ def transcribe():
 
     try:
         result = model.transcribe(tmp_path, language=LANGUAGE, fp16=False)
-        return jsonify({"text": result["text"].strip()})
+        text = result["text"].strip()
+        print(f"[transcribe] определён язык: {result.get('language')}, длина текста: {len(text)}, текст: {text!r}")
+        return jsonify({"text": text})
     except Exception as exc:  # noqa: BLE001 - хотим вернуть текст ошибки клиенту
         return jsonify({"error": str(exc)}), 500
     finally:
