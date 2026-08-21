@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Meet Local Transcriber",
+  "version": "1.0.0",
+  "description": "Одним кликом записывает вкладку Google Meet (собеседник + ваш микрофон) и отправляет запись на локальный Whisper-сервер для расшифровки.",
+  "permissions": ["tabCapture", "offscreen", "storage", "downloads", "activeTab"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Meet Local Transcriber"
+  }
+}
